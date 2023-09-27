@@ -2,17 +2,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import argparse
 import os
-import math
+import hashlib
 
-# t0.95(ν)因子查询表
+## t0.95(ν)因子查询表 ##
 t_table = {
     1: 12.71, 2: 4.30, 3: 3.18, 4: 2.78, 5: 2.57, 6: 2.45, 7: 2.36, 8: 2.31, 9: 2.26, 10: 2.23,
     12: 2.18, 15: 2.13, 20: 2.09, 30: 2.04, 40: 2.02, 50: 2.01, 60: 2.00, 70: 1.99, 100: 1.98, float('Inf'): 1.96
 }
-
-# 设置图标格式
-plt.rcParams['font.sans-serif'] = ['KaiTi']
-plt.rcParams['axes.unicode_minus'] = False
 
 # 解析命令行参数
 parser = argparse.ArgumentParser(description='进行线性最小二乘拟合并绘制图像。')
@@ -41,11 +37,28 @@ for line in lines[3:]:
 y_data_array = np.array(y_data_list)
 y_data = np.mean(y_data_array, axis=0)
 y_name = lines[3].split(":")[0].strip()
+# 计算相关系数
+corr_coeff = np.corrcoef(x_data, y_data)[0, 1]
 
 # 错误处理
 if len(x_line) < 2:
     print("[Error] 输入文件格式错误。")
     exit(1)
+
+# 设置图标格式 
+plt.rcParams['font.sans-serif'] = ['KaiTi']
+plt.rcParams['axes.unicode_minus'] = False
+
+# 先绘制原始数据图像
+plt.figure(figsize=(10, 6))
+plt.title(header)
+plt.plot(x_data, y_data, label='原始数据（折线）', linestyle='-', color='blue', marker='o')
+plt.figtext(0.75, 0.05, f'相关系数: {corr_coeff:.6f}', fontsize=10)
+plt.xlabel(x_name)
+plt.ylabel(y_name)
+plt.legend()
+plt.figtext(0.5, 0.01, other_info, wrap=True, horizontalalignment='center', fontsize=10)
+plt.savefig(os.path.splitext(filename)[0] + '_original.png')
 
 # 数据处理和拟合
 if mode == 2:
@@ -61,6 +74,8 @@ elif mode == 3:
 coefficients = np.polyfit(x_data, y_data, 1)
 slope, intercept = coefficients
 y_fit = slope * x_data + intercept
+# 计算相关系数
+corr_coeff = np.corrcoef(x_data, y_data)[0, 1]
 
 # 计算不确定度（如果倒数第二行有不确定度参数）
 if ":" not in lines[-2]:
@@ -76,7 +91,12 @@ if ":" not in lines[-2]:
 else:
     delta_A = delta_B = None
 delta = np.sqrt(delta_A ** 2 + delta_B ** 2) if delta_A is not None else None
-print(delta)
+# 计算标准差 S_{slope} 和斜率的不确定度 Δ_slope
+N = len(x_data)
+r_squared = corr_coeff ** 2
+S_slope = slope * np.sqrt((1 / r_squared - 1) / (N - 2))
+t_factor = t_table.get(N - 2, t_table[float('Inf')])  # 查询t因子，如果没有对应的N-2值，使用无穷大作为key
+Delta_slope = S_slope * t_factor
 
 # 读取精确位数（从最后一行）
 if " " in lines[-1]:
@@ -90,18 +110,27 @@ plt.figure(figsize=(10, 6))
 plt.title(header)
 plt.scatter(x_data, y_data, label='测量数据', marker='o')
 # plt.errorbar(x_data, y_data, yerr=delta, fmt='o', label='不确定度')
-plt.plot(x_data, y_fit, label=f'拟合线: y = {slope:.2f}x + {intercept:.2f}', color='red')
+plt.figtext(0.75, 0.05, f'相关系数: {corr_coeff:.6f}', fontsize=10)
+plt.figtext(0.75, 0.02, f'斜率不确定度: {Delta_slope:.6f}', fontsize=10)
+plt.plot(x_data, y_fit, label=f'拟合线: y = {slope:.6f}x + {intercept:.6f}', color='red')
 plt.xlabel(x_name)
 plt.ylabel(y_name)
 plt.legend()
 plt.figtext(0.5, 0.01, other_info, wrap=True, horizontalalignment='center', fontsize=10)
-
 # 保存图像，文件名与输入文件相同，扩展名为.png
 output_filename = os.path.splitext(filename)[0] + '.png'
 plt.savefig(output_filename)
-# plt.show()
 
-# 生成Latex表格代码 #
+
+
+
+# 生成Latex代码 
+
+# 为LaTeX标签生成哈希值
+def generate_hash(text):
+    m = hashlib.md5()
+    m.update(text.encode('utf-8'))
+    return m.hexdigest()[:8]  # 返回前8个字符作为标签
 # 生成表格
 latex_table= "\\begin{table}[h]\n"
 latex_table += "\\centering\n"
@@ -127,29 +156,51 @@ else:
             latex_table += f" & {y_data[x_idx]:.{precision2}f} ($\\pm$ {delta[x_idx]:.{precision2}f}) \\\\\n"
         else:
             latex_table += f" & {y_data[x_idx]:.{precision2}f} \\\\\n"
-latex_table += f"\\hline\n\\end{{tabular}}\n\\caption{{{header}实验的测量数据}}\\end{{table}}\n"
+table_label = generate_hash(header + "_table")
+latex_table += f"\\hline\n\\end{{tabular}}\n\\caption{{{header}实验的测量数据}}\n\\label{{{table_label}}}\n\\end{{table}}\n"
 # 生成包含图像的Latex代码
+figure_label_1 = generate_hash(header + "_picture1")
+figure_label_2 = generate_hash(header + "_picture2")
+output_filename_only = os.path.basename(os.path.splitext(filename)[0] + '_original.png')
+latex_original_figure = f"\\begin{{figure}}[h]\n\\centering\n\\includegraphics[scale=0.5]{{{output_filename_only}}}\n\\caption{{{header}的原始数据}}\n\\label{{{figure_label_1}}}\n\\end{{figure}}\n"
 output_filename_only = os.path.basename(os.path.splitext(filename)[0] + '.png')
-latex_figure = f"\\begin{{figure}}[h]\n\\centering\n\\includegraphics[scale=0.5]{{{output_filename_only}}}\n\\caption{{{header}的拟合结果}}\n\\end{{figure}}\n"
+latex_figure = f"\\begin{{figure}}[h]\n\\centering\n\\includegraphics[scale=0.5]{{{output_filename_only}}}\n\\caption{{{header}的拟合结果}}\n\\label{{{figure_label_2}}}\n\\end{{figure}}\n"
+# 生成相关系数与不确定度
+latex_corr = f"\\textbf{{相关系数}}为: {corr_coeff:.6f}。\n"
+latex_corr += f"根据斜率不确定度的计算公式：\n\\begin{{align}}\n\\Delta_{{slope}}&=t(N-2)\\cdot S_{{slope}}\\\\ & = t(N-2)\\cdot slope\\cdot  \\sqrt{{\\frac{{\\frac{{1}}{{r^2}}-1}}{{N-2}}}}\\\\ & = t({N-2})\\cdot {slope}\\cdot \\sqrt{{\\frac{{\\frac{{1}}{{{corr_coeff}^2-1}}}}{{{N}-2}}}} \\\\ &= {Delta_slope:.6f}\n\end{{align}}\n"
 # 将Latex代码合并，并保存到.tex文件中
-latex_content = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage{grffile}\n\\usepackage{ctex}\n\\begin{document}\n"
-latex_content += f"在本次实验中，我们在{other_info}条件下，探究{header}。\n"
+# latex_content = "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage{grffile}\n\\usepackage{ctex}\n\\begin{document}\n"
+latex_content = f"在本次实验中，我们在{other_info}条件下，探究{header}。\n"
 latex_content += latex_table
 if delta_A is not None:
-    latex_content += f"\n由不确定度的计算公式：$\\Delta_A = \\frac{{t_p(v)}}{{\\sqrt n}} S_u$。\n"
-    formatted_S_x = [f"{value:.{precision2}f}" for value in S_x]
-    formatted_S_x_str = ",".join(formatted_S_x)
-    latex_content += f"\n其中，$n={n}$，$v={v}$，查表得到$t_p(v)={t_value}$。通过计算，我们可以得到$S_u=\\sqrt{{\\frac{{\\sum_{{i=1}}^{{n}}(u-u_i)^2}}{{n-1}}}}={formatted_S_x_str}$。\n"
-    formatted_delta_A = [f"{value:.{precision2}f}" for value in delta_A]
-    formatted_delta_B = f"{delta_B:.{precision2}f}"
-    formatted_delta = [f"{value:.{precision2}f}" for value in delta]
-    formatted_delta_A_str = ",".join(formatted_delta_A)
-    formatted_delta_B_str = formatted_delta_B
-    formatted_delta_str = ",".join(formatted_delta)
-    latex_content += f"\n因此，$\\Delta_A={formatted_delta_A_str}$。\n\n再根据$\\Delta_B={formatted_delta_B_str}$，我们可以得到：\n\n$\\Delta=\\sqrt{{\\Delta_A^2+\\Delta_B^2}}={formatted_delta_str}$。\n"
-latex_content += "\n由这样的数据，我们可以得到拟合结果如下图所示。\n"
+    if n != 1:
+        latex_content += f"\n由不确定度的计算公式：$\\Delta_A = \\frac{{t_p(v)}}{{\\sqrt n}} S_u$。\n"
+        formatted_S_x = [f"{value:.{precision2}f}" for value in S_x]
+        formatted_S_x_str = ",".join(formatted_S_x)
+        latex_content += f"\n其中，$n={n}$，$v={v}$，查表得到$t_p(v)={t_value}$。通过计算，我们可以得到$S_u=\\sqrt{{\\frac{{\\sum_{{i=1}}^{{n}}(u-u_i)^2}}{{n-1}}}}={formatted_S_x_str}$。\n"
+        formatted_delta_A = [f"{value:.{precision2}f}" for value in delta_A]
+        formatted_delta_B = f"{delta_B:.{precision2}f}"
+        formatted_delta = [f"{value:.{precision2}f}" for value in delta]
+        formatted_delta_A_str = ",".join(formatted_delta_A)
+        formatted_delta_B_str = formatted_delta_B
+        formatted_delta_str = ",".join(formatted_delta)
+        latex_content += f"\n因此，$\\Delta_A={formatted_delta_A_str}$。\n\n再根据$\\Delta_B={formatted_delta_B_str}$，我们可以得到：\n\n$\\Delta=\\sqrt{{\\Delta_A^2+\\Delta_B^2}}={formatted_delta_str}$。\n"
+    else:
+        latex_content += f"\nn=1时，$\\Delta_A$无法计算，而$\\Delta_B$={delta_B:.{precision2}f}，因此取$\\Delta$={delta_B:.{precision2}f}。\n"
+latex_content += f"\n由\\ref{{{table_label}}}这样的数据，我们利用Python程序，可以得到\\ref{{{figure_label_1}}}。\n"
+latex_content += latex_original_figure
+if mode == 1:
+    latex_content += f"\n\n我们可以得到拟合结果如下图所示。\n"
+elif mode == 2 or mode == 3:
+    latex_content += f"\n很容易发现此时并非线性关系，我们选取合适的回归方式进行拟合。"
+    if mode == 2:
+        latex_content += f"\n\n取ln后，我们可以得到拟合结果如下图所示。\n"
+    elif mode == 3:
+        latex_content += f"\n\n取1/x后，我们可以得到拟合结果如下图所示。\n"
 latex_content += latex_figure
-latex_content += "\\end{document}"
+latex_content += f"\n\n由图可知，拟合结果为\\ref{{{figure_label_2}}}：$y={slope:.6f}x+{intercept:.6f}$。\n"
+latex_content += latex_corr
+# latex_content += "\\end{document}"
 with open(os.path.splitext(filename)[0] + '.tex', 'w', encoding='utf-8') as f:
     f.write(latex_content)
 print("LaTeX 文件已生成。")
