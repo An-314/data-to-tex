@@ -10,19 +10,19 @@ t_table = {
     12: 2.18, 15: 2.13, 20: 2.09, 30: 2.04, 40: 2.02, 50: 2.01, 60: 2.00, 70: 1.99, 100: 1.98, float('Inf'): 1.96
 }
 
-# 解析命令行参数
+
+## 解析命令行参数 ##
 parser = argparse.ArgumentParser(description='进行线性最小二乘拟合并绘制图像。')
 parser.add_argument('filename', type=str, help='包含数据的.txt文件名')
 parser.add_argument('mode', type=int, nargs='?', default=1, choices=[1, 2, 3], help='1为y-x的线性拟合，2为lny-lnx的线性拟合，3为y-1/x的线性拟合')
-
 args = parser.parse_args()
 filename = args.filename
 mode = args.mode
 
-# 读取.txt文件
+
+## 读取.txt文件 ##
 with open(filename, 'r', encoding='utf-8') as f:
     lines = f.readlines()
-
 # 提取必要信息
 header = lines[0].strip()
 other_info = lines[1].strip()
@@ -39,44 +39,6 @@ y_data = np.mean(y_data_array, axis=0)
 y_name = lines[3].split(":")[0].strip()
 # 计算相关系数
 corr_coeff = np.corrcoef(x_data, y_data)[0, 1]
-
-# 错误处理
-if len(x_line) < 2:
-    print("[Error] 输入文件格式错误。")
-    exit(1)
-
-# 设置图标格式 
-plt.rcParams['font.sans-serif'] = ['KaiTi']
-plt.rcParams['axes.unicode_minus'] = False
-
-# 先绘制原始数据图像
-plt.figure(figsize=(10, 6))
-plt.title(header)
-plt.plot(x_data, y_data, label='原始数据（折线）', linestyle='-', color='blue', marker='o')
-plt.figtext(0.75, 0.05, f'相关系数: {corr_coeff:.6f}', fontsize=10)
-plt.xlabel(x_name)
-plt.ylabel(y_name)
-plt.legend()
-plt.figtext(0.5, 0.01, other_info, wrap=True, horizontalalignment='center', fontsize=10)
-plt.savefig(os.path.splitext(filename)[0] + '_original.png')
-
-# 数据处理和拟合
-if mode == 2:
-    x_data = np.log(x_data)
-    y_data = np.log(y_data)
-    x_name = f'ln[{x_name}]'
-    y_name = f'ln[{y_name}]'
-
-elif mode == 3:
-    x_data = 1/x_data
-    x_name = f'1/{x_name}'
-
-coefficients = np.polyfit(x_data, y_data, 1)
-slope, intercept = coefficients
-y_fit = slope * x_data + intercept
-# 计算相关系数
-corr_coeff = np.corrcoef(x_data, y_data)[0, 1]
-
 # 计算不确定度（如果倒数第二行有不确定度参数）
 if ":" not in lines[-2]:
     delta_B = float(lines[-2].strip())
@@ -91,6 +53,57 @@ if ":" not in lines[-2]:
 else:
     delta_A = delta_B = None
 delta = np.sqrt(delta_A ** 2 + delta_B ** 2) if delta_A is not None else None
+# 读取精确位数（从最后一行）与 错误处理
+if " " in lines[-1]:
+    precision1, precision2 = map(int, lines[-1].strip().split())
+else:
+    print("[Error] 输入文件格式错误。")
+    exit(1)
+if len(x_line) < 2:
+    print("[Error] 输入文件格式错误。")
+    exit(1)
+
+
+
+## 使用matplotlib绘制原始数据图像 ##
+# 设置图标格式 
+plt.rcParams['font.sans-serif'] = ['KaiTi']
+plt.rcParams['axes.unicode_minus'] = False
+# 先绘制原始数据图像
+plt.figure(figsize=(10, 6))
+plt.title(header)
+plt.plot(x_data, y_data, label='原始数据（折线）', linestyle='-', color='blue', marker='o')
+plt.figtext(0.75, 0.05, f'相关系数: {corr_coeff:.6f}', fontsize=10)
+plt.xlabel(x_name)
+plt.ylabel(y_name)
+plt.legend()
+plt.figtext(0.5, 0.01, other_info, wrap=True, horizontalalignment='center', fontsize=10)
+plt.savefig(os.path.splitext(filename)[0] + '_original.png')
+
+
+
+## 数据处理和拟合 ##
+if mode == 1:
+    x_data_fixed = x_data
+    y_data_fixed = y_data
+    x_name_fixed = x_name
+    y_name_fixed = y_name
+if mode == 2:
+    x_data_fixed = np.log(x_data)
+    y_data_fixed = np.log(y_data)
+    x_name_fixed = f'ln[{x_name}]'
+    y_name_fixed = f'ln[{y_name}]'
+elif mode == 3:
+    x_data_fixed = x_data
+    y_data_fixed = 1/y_data
+    x_name_fixed = x_name
+    y_name_fixed = f'1/[{y_name}]'
+# 使用最小二乘法拟合
+coefficients = np.polyfit(x_data_fixed, y_data_fixed, 1)
+slope, intercept = coefficients
+y_fit = slope * x_data_fixed + intercept
+# 计算相关系数
+corr_coeff = np.corrcoef(x_data_fixed, y_data_fixed)[0, 1]
 # 计算标准差 S_{slope} 和斜率的不确定度 Δ_slope
 N = len(x_data)
 r_squared = corr_coeff ** 2
@@ -98,23 +111,18 @@ S_slope = slope * np.sqrt((1 / r_squared - 1) / (N - 2))
 t_factor = t_table.get(N - 2, t_table[float('Inf')])  # 查询t因子，如果没有对应的N-2值，使用无穷大作为key
 Delta_slope = S_slope * t_factor
 
-# 读取精确位数（从最后一行）
-if " " in lines[-1]:
-    precision1, precision2 = map(int, lines[-1].strip().split())
-else:
-    print("[Error] 输入文件格式错误。")
-    exit(1)
 
-# 使用matplotlib进行绘图
+
+## 使用matplotlib绘制合适的拟合图像 ##
 plt.figure(figsize=(10, 6))
 plt.title(header)
-plt.scatter(x_data, y_data, label='测量数据', marker='o')
+plt.scatter(x_data_fixed, y_data_fixed, label='测量数据', marker='o')
 # plt.errorbar(x_data, y_data, yerr=delta, fmt='o', label='不确定度')
 plt.figtext(0.75, 0.05, f'相关系数: {corr_coeff:.6f}', fontsize=10)
 plt.figtext(0.75, 0.02, f'斜率不确定度: {Delta_slope:.6f}', fontsize=10)
-plt.plot(x_data, y_fit, label=f'拟合线: y = {slope:.6f}x + {intercept:.6f}', color='red')
-plt.xlabel(x_name)
-plt.ylabel(y_name)
+plt.plot(x_data_fixed, y_fit, label=f'拟合线: y = {slope:.6f}x + {intercept:.6f}', color='red')
+plt.xlabel(x_name_fixed)
+plt.ylabel(y_name_fixed)
 plt.legend()
 plt.figtext(0.5, 0.01, other_info, wrap=True, horizontalalignment='center', fontsize=10)
 # 保存图像，文件名与输入文件相同，扩展名为.png
@@ -123,9 +131,7 @@ plt.savefig(output_filename)
 
 
 
-
-# 生成Latex代码 
-
+## 生成Latex代码 ## 
 # 为LaTeX标签生成哈希值
 def generate_hash(text):
     m = hashlib.md5()
@@ -134,7 +140,6 @@ def generate_hash(text):
 # 生成表格
 latex_table= "\\begin{table}[h]\n"
 latex_table += "\\centering\n"
-# 根据 n 的值决定 y 列的列数
 if n > 1:
     latex_table += "\\begin{tabular}{|c|" + "c|" * n + "c|}\n"
     latex_table += "\\hline\n"
@@ -144,7 +149,6 @@ else:
     latex_table += "\\hline\n"
     latex_table += f"{x_name} & {y_name} \\\\\n"
 latex_table += "\\hline\n"
-# 添加数据
 if n == 1:
     for x, y in zip(x_data, y_data_array[0]):
         latex_table += f"{x:.{precision1}f} & {y:.{precision2}f} \\\\\n"
@@ -158,6 +162,17 @@ else:
             latex_table += f" & {y_data[x_idx]:.{precision2}f} \\\\\n"
 table_label = generate_hash(header + "_table")
 latex_table += f"\\hline\n\\end{{tabular}}\n\\caption{{{header}实验的测量数据}}\n\\label{{{table_label}}}\n\\end{{table}}\n"
+# 生成x、y修正之后的表格
+latex_table_fixed = "\\begin{table}[h]\n"
+latex_table_fixed += "\\centering\n"
+latex_table_fixed += "\\begin{tabular}{|c|c|}\n"
+latex_table_fixed += "\\hline\n"
+latex_table_fixed += f"{x_name_fixed} & {y_name_fixed} \\\\\n"
+latex_table_fixed += "\\hline\n"
+for x, y in zip(x_data_fixed, y_data_fixed):
+    latex_table_fixed += f"{x:.{precision1}f} & {y:.{precision2}f} \\\\\n"
+table_fixed_label = generate_hash(header + "_fixed_table")
+latex_table_fixed += f"\\hline\n\\end{{tabular}}\n\\caption{{{header}实验的拟合数据}}\n\\label{{{table_fixed_label}}}\n\\end{{table}}\n"
 # 生成包含图像的Latex代码
 figure_label_1 = generate_hash(header + "_picture1")
 figure_label_2 = generate_hash(header + "_picture2")
@@ -196,7 +211,8 @@ elif mode == 2 or mode == 3:
     if mode == 2:
         latex_content += f"\n\n取ln后，我们可以得到拟合结果如下图所示。\n"
     elif mode == 3:
-        latex_content += f"\n\n取1/x后，我们可以得到拟合结果如下图所示。\n"
+        latex_content += f"\n\n取1/y后，我们可以得到拟合结果如下图所示。\n"
+    latex_content += latex_table_fixed
 latex_content += latex_figure
 latex_content += f"\n\n由图可知，拟合结果为\\ref{{{figure_label_2}}}：$y={slope:.6f}x+{intercept:.6f}$。\n"
 latex_content += latex_corr
